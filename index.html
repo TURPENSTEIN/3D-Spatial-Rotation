@@ -1886,55 +1886,82 @@
             return positions;
         }
 
-        // Canonical representation under the 24 proper rotations of a cube.
-        // Translation is normalized away first, so only shape connectivity
-        // and handedness determine equivalence.
+        // All 24 proper (determinant +1) orientations of a cube.
+        // These are rigid 3D rotations only: no reflections are included.
         const ROTATION_MATRICES = (() => {
             const matrices = [];
             const perms = [
-                [0,1,2], [0,2,1], [1,0,2], [1,2,0], [2,0,1], [2,1,0]
+                [0, 1, 2], [0, 2, 1], [1, 0, 2],
+                [1, 2, 0], [2, 0, 1], [2, 1, 0]
             ];
             const signs = [-1, 1];
+
             for (const p of perms) {
-                for (const sx of signs) for (const sy of signs) for (const sz of signs) {
-                    const m = [[0,0,0],[0,0,0],[0,0,0]];
-                    m[0][p[0]] = sx; m[1][p[1]] = sy; m[2][p[2]] = sz;
-                    const det =
-                        m[0][0] * (m[1][1] * m[2][2] - m[1][2] * m[2][1]) -
-                        m[0][1] * (m[1][0] * m[2][2] - m[1][2] * m[2][0]) +
-                        m[0][2] * (m[1][0] * m[2][1] - m[1][1] * m[2][0]);
-                    if (det === 1) matrices.push(m);
+                for (const sx of signs) {
+                    for (const sy of signs) {
+                        for (const sz of signs) {
+                            const m = [
+                                [0, 0, 0],
+                                [0, 0, 0],
+                                [0, 0, 0]
+                            ];
+
+                            m[0][p[0]] = sx;
+                            m[1][p[1]] = sy;
+                            m[2][p[2]] = sz;
+
+                            const det =
+                                m[0][0] * (m[1][1] * m[2][2] - m[1][2] * m[2][1]) -
+                                m[0][1] * (m[1][0] * m[2][2] - m[1][2] * m[2][0]) +
+                                m[0][2] * (m[1][0] * m[2][1] - m[1][1] * m[2][0]);
+
+                            if (det === 1) matrices.push(m);
+                        }
+                    }
                 }
             }
+
             return matrices;
         })();
 
-        function normalizedPathKey(path) {
-            const minX = Math.min(...path.map(p => p[0]));
-            const minY = Math.min(...path.map(p => p[1]));
-            const minZ = Math.min(...path.map(p => p[2]));
-            return path.map(p => `${p[0]-minX},${p[1]-minY},${p[2]-minZ}`).sort().join(';');
-        }
-
-        function canonicalShapeKey(path) {
-            const variants = ROTATION_MATRICES.map(m => {
-                const transformed = path.map(p => [
-                    m[0][0]*p[0] + m[0][1]*p[1] + m[0][2]*p[2],
-                    m[1][0]*p[0] + m[1][1]*p[1] + m[1][2]*p[2],
-                    m[2][0]*p[0] + m[2][1]*p[1] + m[2][2]*p[2]
+        // Generate the canonical coordinate string for every one of the
+        // 24 possible rigid orientations of a block path. Translation is
+        // removed after rotation so absolute position never affects shape
+        // identity. Each orientation is independently sorted lexicographically.
+        function getNormalizedOrientations(blockPath) {
+            return ROTATION_MATRICES.map(matrix => {
+                const rotated = blockPath.map(([x, y, z]) => [
+                    matrix[0][0] * x + matrix[0][1] * y + matrix[0][2] * z,
+                    matrix[1][0] * x + matrix[1][1] * y + matrix[1][2] * z,
+                    matrix[2][0] * x + matrix[2][1] * y + matrix[2][2] * z
                 ]);
-                return normalizedPathKey(transformed);
+
+                const minX = Math.min(...rotated.map(p => p[0]));
+                const minY = Math.min(...rotated.map(p => p[1]));
+                const minZ = Math.min(...rotated.map(p => p[2]));
+
+                const normalized = rotated
+                    .map(([x, y, z]) => [x - minX, y - minY, z - minZ])
+                    .sort((a, b) => {
+                        if (a[0] !== b[0]) return a[0] - b[0];
+                        if (a[1] !== b[1]) return a[1] - b[1];
+                        return a[2] - b[2];
+                    });
+
+                return JSON.stringify(normalized);
             });
-            variants.sort();
-            return variants[0];
         }
 
-        function isShapeEquivalent(pathA, pathB) {
-            return canonicalShapeKey(pathA) === canonicalShapeKey(pathB);
+        // Two paths are rotationally identical iff their normalized
+        // orientation sets have at least one exact match.
+        function areRotationallyEqual(pathA, pathB) {
+            const orientationsA = getNormalizedOrientations(pathA);
+            const orientationsB = new Set(getNormalizedOrientations(pathB));
+            return orientationsA.some(key => orientationsB.has(key));
         }
 
         function makeMirrorPath(path) {
-            return path.map(p => [-p[0], p[1], p[2]]);
+            return path.map(([x, y, z]) => [-x, y, z]);
         }
 
 
@@ -2461,51 +2488,32 @@
             const settings = getDifficultySettings();
             const numCubes = settings.numCubes;
 
-            // Generate one target, force it to be chiral, then generate
-            // three distractors that are pairwise non-isomorphic under
-            // every proper 3D rotation. This guarantees one valid pair.
+            // Rule A: generate TARGET_A and reject it whenever its X-axis
+            // mirror is rotationally equivalent. This guarantees that the
+            // intentionally mirrored distractor is genuinely different.
             let pathA;
             let pathAMirror;
-            let targetKey;
-            let mirrorKey;
 
-            for (let attempt = 0; attempt < 500; attempt++) {
+            do {
                 pathA = generateComplexPath(numCubes);
                 pathAMirror = makeMirrorPath(pathA);
-                targetKey = canonicalShapeKey(pathA);
-                mirrorKey = canonicalShapeKey(pathAMirror);
-                if (targetKey !== mirrorKey) break;
-            }
+            } while (areRotationallyEqual(pathA, pathAMirror));
 
-            // Extremely unlikely fallback: keep generating until a chiral
-            // target is found; this is finite for the supported block counts.
-            while (targetKey === mirrorKey) {
-                pathA = generateComplexPath(numCubes);
-                pathAMirror = makeMirrorPath(pathA);
-                targetKey = canonicalShapeKey(pathA);
-                mirrorKey = canonicalShapeKey(pathAMirror);
-            }
-
+            // Rule B: every distractor must be rotationally distinct from
+            // TARGET_A, MIRROR_A, and every previously accepted distractor.
+            const acceptedPaths = [pathA, pathAMirror];
             const distractorPaths = [];
-            const usedKeys = new Set([targetKey, mirrorKey]);
-            let guard = 0;
-            while (distractorPaths.length < 3 && guard++ < 5000) {
-                const candidate = generateComplexPath(numCubes);
-                const key = canonicalShapeKey(candidate);
-                if (!usedKeys.has(key)) {
-                    usedKeys.add(key);
-                    distractorPaths.push(candidate);
-                }
-            }
 
-            // A retry path for pathological random seeds/very low diversity.
             while (distractorPaths.length < 3) {
                 const candidate = generateComplexPath(numCubes);
-                const key = canonicalShapeKey(candidate);
-                if (!usedKeys.has(key)) {
-                    usedKeys.add(key);
-                    distractorPaths.push(candidate);
-                }
+                const conflicts = acceptedPaths.some(existing =>
+                    areRotationallyEqual(candidate, existing)
+                );
+
+                if (conflicts) continue;
+
+                distractorPaths.push(candidate);
+                acceptedPaths.push(candidate);
             }
 
             const pathDefs = [
