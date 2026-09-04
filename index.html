@@ -2488,23 +2488,16 @@
             const settings = getDifficultySettings();
             const numCubes = settings.numCubes;
 
-            // Rule A: generate TARGET_A and reject it whenever its X-axis
-            // mirror is rotationally equivalent. This guarantees that the
-            // intentionally mirrored distractor is genuinely different.
-            let pathA;
-            let pathAMirror;
-
-            do {
-                pathA = generateComplexPath(numCubes);
-                pathAMirror = makeMirrorPath(pathA);
-            } while (areRotationallyEqual(pathA, pathAMirror));
+            // Rule A: generate TARGET_A. The explicit mirror has been removed
+            // to ensure there are only ever exactly 2 shapes that make a pair.
+            let pathA = generateComplexPath(numCubes);
 
             // Rule B: every distractor must be rotationally distinct from
-            // TARGET_A, MIRROR_A, and every previously accepted distractor.
-            const acceptedPaths = [pathA, pathAMirror];
+            // TARGET_A and every previously accepted distractor.
+            const acceptedPaths = [pathA];
             const distractorPaths = [];
 
-            while (distractorPaths.length < 3) {
+            while (distractorPaths.length < 4) {
                 const candidate = generateComplexPath(numCubes);
                 const conflicts = acceptedPaths.some(existing =>
                     areRotationallyEqual(candidate, existing)
@@ -2519,10 +2512,10 @@
             const pathDefs = [
                 { path: pathA, matchId: 'TARGET_A' },
                 { path: pathA, matchId: 'TARGET_A' },
-                { path: pathAMirror, matchId: 'MIRROR_A' },
                 { path: distractorPaths[0], matchId: 'DISTRACTOR_B' },
                 { path: distractorPaths[1], matchId: 'DISTRACTOR_C' },
-                { path: distractorPaths[2], matchId: 'DISTRACTOR_D' }
+                { path: distractorPaths[2], matchId: 'DISTRACTOR_D' },
+                { path: distractorPaths[3], matchId: 'DISTRACTOR_E' }
             ];
 
             pathDefs.sort(() => Math.random() - 0.5);
